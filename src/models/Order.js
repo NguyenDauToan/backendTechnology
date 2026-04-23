@@ -11,7 +11,7 @@ const orderSchema = new mongoose.Schema({
         image: { type: String },
         imeiList: [String] 
     }],
-
+    isReceived: { type: Boolean, default: false },
     shippingAddress: {
         address: { type: String, required: true },
         city: { type: String, required: true },

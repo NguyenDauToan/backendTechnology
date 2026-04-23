@@ -89,7 +89,7 @@ router.get('/google/callback',
   (req,res)=>{
     const user = req.user;
     const token = generateToken(user._id);
-    const frontendURL = "http://localhost:8081";
+    const frontendURL = "http://localhost:8080";
     res.redirect(`${frontendURL}/login?token=${token}&role=${user.role}&name=${encodeURIComponent(user.name)}`);
   }
 );

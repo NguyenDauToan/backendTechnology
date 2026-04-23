@@ -20,10 +20,10 @@ const generateIMEI = () => {
 // 1. Tạo đơn hàng mới (User mua)
 router.post("/", protect, async (req, res) => {
     // 1. Bổ sung itemsPrice, shippingPrice vào destructuring
-    const { 
-        orderItems, 
-        shippingAddress, 
-        paymentMethod, 
+    const {
+        orderItems,
+        shippingAddress,
+        paymentMethod,
         totalPrice,
         itemsPrice,    // <--- Thêm cái này
         shippingPrice  // <--- Thêm cái này
@@ -82,9 +82,9 @@ router.put("/:id/pay", protect, async (req, res) => {
 
         await order.save();
 
-        res.json({ 
+        res.json({
             message: "Thanh toán thành công. Đã tạo IMEI cho sản phẩm.",
-            order 
+            order
         });
 
     } catch (error) {
@@ -103,7 +103,7 @@ router.put("/:id/confirm", protect, admin, staff, async (req, res) => {
             return res.status(400).json({ message: "Chưa thanh toán, không thể xác nhận." });
         }
 
-        order.status = 'Completed';
+        order.status = 'Delivered';
         order.deliveredAt = Date.now();
 
         // Sinh bảo hành
@@ -153,7 +153,7 @@ router.get("/my-products", protect, async (req, res) => {
 
         for (const order of orders) {
             for (const item of order.orderItems) {
-                
+
                 // Lấy warranty để có IMEI (code)
                 const warranties = await Warranty.find({
                     order_id: order._id,
@@ -191,6 +191,7 @@ router.get("/", protect, admin, async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+
 // 5. Cập nhật trạng thái đơn hàng (Dành cho Shipper/Admin)
 router.put("/:id/status", protect, async (req, res) => {
     const { status } = req.body;
@@ -198,39 +199,44 @@ router.put("/:id/status", protect, async (req, res) => {
     try {
         // 1. Tìm đơn hàng
         const order = await Order.findById(req.params.id);
-        
+
         if (!order) {
             return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
         }
 
         // 2. Logic trừ kho (Chỉ chạy khi chuyển sang Completed)
         if (status === 'Completed' && order.status !== 'Completed') {
-            
-            // Duyệt qua từng sản phẩm để trừ kho
+
+            // ❗ COD phải thu tiền trước
+            if (order.paymentMethod === 'COD' && !order.isPaid) {
+                return res.status(400).json({
+                    message: "Chưa thu tiền COD, không thể hoàn tất đơn"
+                });
+            }
+        
+            // ❗ Non-COD thì auto paid
+            if (order.paymentMethod !== 'COD') {
+                order.isPaid = true;
+                order.paidAt = Date.now();
+            }
+        
+            order.deliveredAt = Date.now();
+        
+            // trừ kho
             for (const item of order.orderItems) {
                 const product = await Product.findById(item.product);
-                
                 if (product) {
-                    // Kiểm tra stock để tránh âm kho (Option)
-                    // if (product.stock < item.quantity) throw new Error(`Sản phẩm ${product.name} không đủ tồn kho`);
-
-                    product.stock = product.stock - item.quantity;
-                    product.sold = (product.sold || 0) + item.quantity; // Cộng số lượng bán
-
-                    await product.save(); // Lưu lại ngay
+                    product.stock -= item.quantity;
+                    product.sold = (product.sold || 0) + item.quantity;
+                    await product.save();
                 }
             }
-
-            // Cập nhật các mốc thời gian
-            order.isPaid = true;
-            order.paidAt = Date.now();
-            order.deliveredAt = Date.now();
         }
 
         // 3. Cập nhật trạng thái đơn
         order.status = status;
         const updatedOrder = await order.save();
-        
+
         res.json(updatedOrder);
 
     } catch (error) {
@@ -238,15 +244,16 @@ router.put("/:id/status", protect, async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+
 // Lấy danh sách đơn hàng cho Shipper
 router.get("/staff/deliveries", protect, staff, async (req, res) => {
     try {
         const orders = await Order.find({
             // ĐÃ SỬA: Thêm 'Delivered' vào mảng điều kiện để hiển thị ở tab "Chờ KH"
-            status: { $in: ['Pending', 'Confirmed', 'Shipping', 'Delivered', 'Completed'] } 
+            status: { $in: ['Pending', 'Confirmed', 'Shipping', 'Delivered', 'Completed'] }
         })
-        .populate("user", "id name email phone")
-        .sort({ createdAt: -1 });                                       
+            .populate("user", "id name email phone")
+            .sort({ createdAt: -1 });
 
         res.json(orders);
     } catch (error) {
@@ -268,6 +275,36 @@ router.get("/:id", protect, async (req, res) => {
     } catch (error) {
         // Nếu ID không đúng định dạng ObjectId của Mongo cũng sẽ vào đây
         res.status(500).json({ message: "Lỗi Server hoặc ID đơn hàng không hợp lệ" });
+    }
+});
+// PUT /api/orders/:id/cod-paid
+router.put("/:id/cod-paid", protect, staff, async (req, res) => {
+    try {
+        const order = await Order.findById(req.params.id);
+
+        if (!order) {
+            return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
+        }
+
+        // Chỉ áp dụng cho COD + đã giao
+        if (order.paymentMethod !== "COD") {
+            return res.status(400).json({ message: "Đơn này không phải COD" });
+        }
+
+        if (order.status !== "Delivered") {
+            return res.status(400).json({ message: "Chưa giao hàng, không thể xác nhận thanh toán" });
+        }
+
+        order.isPaid = true;
+        order.paidAt = Date.now();
+
+        await order.save();
+
+        res.json({ message: "Đã xác nhận khách thanh toán COD", order });
+
+    } catch (error) {
+        console.error("COD pay error:", error);
+        res.status(500).json({ message: error.message });
     }
 });
 export default router;
