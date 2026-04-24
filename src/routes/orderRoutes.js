@@ -213,15 +213,15 @@ router.put("/:id/status", protect, async (req, res) => {
                     message: "Chưa thu tiền COD, không thể hoàn tất đơn"
                 });
             }
-        
+
             // ❗ Non-COD thì auto paid
             if (order.paymentMethod !== 'COD') {
                 order.isPaid = true;
                 order.paidAt = Date.now();
             }
-        
+
             order.deliveredAt = Date.now();
-        
+
             // trừ kho
             for (const item of order.orderItems) {
                 const product = await Product.findById(item.product);
@@ -304,6 +304,43 @@ router.put("/:id/cod-paid", protect, staff, async (req, res) => {
 
     } catch (error) {
         console.error("COD pay error:", error);
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// PUT /api/orders/:id/received
+router.put("/:id/received", protect, async (req, res) => {
+    try {
+        const order = await Order.findById(req.params.id);
+
+        if (!order) return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
+
+        if (order.user.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: "Không có quyền" });
+        }
+
+        if (order.status !== "Delivered") {
+            return res.status(400).json({ message: "Đơn chưa giao" });
+        }
+
+        // ✅ TRỪ KHO TẠI ĐÂY (CHUẨN SHOPEE)
+        for (const item of order.orderItems) {
+            const product = await Product.findById(item.product);
+            if (product) {
+                product.stock -= item.quantity;
+                product.sold += item.quantity;
+                await product.save();
+            }
+        }
+
+        order.isReceived = true;
+        order.status = "Completed";
+
+        await order.save();
+
+        res.json({ message: "Đã xác nhận nhận hàng" });
+
+    } catch (error) {
         res.status(500).json({ message: error.message });
     }
 });

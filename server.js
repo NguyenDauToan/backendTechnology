@@ -15,7 +15,7 @@ import uploadRoutes from './src/routes/uploadRoutes.js';
 import addressRoutes from './src/routes/addressRoutes.js';
 import adminRoutes from './src/routes/adminRoutes.js';
 import warrantyRoutes from './src/routes/warrantyRoutes.js';
-
+import dashboardRoutes from './src/routes/dashboardRoutes.js';
 // 1. IMPORT PAYMENT ROUTES (Đảm bảo bạn đã tạo file này trong thư mục routes nhé)
 import paymentRoutes from './src/routes/paymentRoutes.js';
 
@@ -40,7 +40,7 @@ app.use('/api/warranty', warrantyRoutes);
 
 // 2. KHAI BÁO PAYMENT ROUTES CHO APP
 app.use('/api/payment', paymentRoutes);
-
+app.use('/api/dashboard', dashboardRoutes);
 app.get('/', (req, res) => {
     res.send('API Huynh Gia is running...');
 });

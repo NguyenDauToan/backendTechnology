@@ -37,7 +37,7 @@ router.post("/create-payment-link", async (req, res) => {
     // 🔥 FIX: tránh trùng orderCode
     const orderCode = Date.now();
 
-    const frontendURL = process.env.FRONTEND_URL || "http://localhost:8081";
+    const frontendURL = process.env.FRONTEND_URL || "http://localhost:8080";
 
     // 🔥 Lưu orderCode vào DB để mapping với PayOS
     const order = await Order.findById(orderId);
