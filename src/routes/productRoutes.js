@@ -1,85 +1,77 @@
 import express from 'express';
 import Product from '../models/Product.js';
 import Category from '../models/Category.js';
-import { protect, admin } from '../middlewares/authMiddleware.js';
-import slugify from 'slugify';
 import Order from '../models/Order.js';
-import multer from "multer";
+import { protect, admin } from '../middlewares/authMiddleware.js';
+import upload from '../config/cloudinary.js'; // ✅ Sử dụng Cloudinary cấu hình sẵn
+import slugify from 'slugify';
 import mongoose from "mongoose";
+
 const router = express.Router();
-const upload = multer({ dest: "uploads/" });
 
 router.post(
     "/:id/review",
     protect,
     upload.fields([
-      { name: "images", maxCount: 5 },
-      { name: "videos", maxCount: 2 }
+        { name: "images", maxCount: 5 },
+        { name: "videos", maxCount: 2 }
     ]),
     async (req, res) => {
-      try {
-        const { rating, comment } = req.body;
-  
-        const product = await Product.findById(req.params.id);
-  
-        if (!product) {
-          return res.status(404).json({ message: "Không tìm thấy sản phẩm" });
+        try {
+            const { rating, comment } = req.body;
+            const product = await Product.findById(req.params.id);
+
+            if (!product) {
+                return res.status(404).json({ message: "Không tìm thấy sản phẩm" });
+            }
+
+            // 1. Kiểm tra xem khách đã mua và nhận hàng thành công chưa
+            const order = await Order.findOne({
+                user: req.user._id,
+                status: "Completed", // ✅ Chỉ cho phép khi trạng thái đơn hàng đã hoàn tất
+                orderItems: { $elemMatch: { product: req.params.id } }
+            });
+
+            if (!order) {
+                return res.status(403).json({ message: "Bạn cần hoàn tất đơn hàng trước khi đánh giá" });
+            }
+
+            // 2. Kiểm tra xem user này đã đánh giá sản phẩm này chưa
+            const alreadyReviewed = product.reviews.find(
+                r => r.user.toString() === req.user._id.toString()
+            );
+
+            if (alreadyReviewed) {
+                return res.status(400).json({ message: "Bạn đã đánh giá sản phẩm này rồi" });
+            }
+
+            // 3. Lấy URL từ Cloudinary
+            const imagePaths = req.files?.images?.map(f => f.path) || [];
+            const videoPaths = req.files?.videos?.map(f => f.path) || [];
+
+            const review = {
+                user: req.user._id,
+                name: req.user.name,
+                rating: Number(rating),
+                comment,
+                images: imagePaths,
+                videos: videoPaths
+            };
+
+            product.reviews.push(review);
+
+            // 4. Cập nhật Rating trung bình
+            product.numReviews = product.reviews.length;
+            product.rating = product.reviews.reduce((acc, item) => acc + item.rating, 0) / product.reviews.length;
+
+            await product.save();
+            res.status(201).json({ message: "Đã gửi đánh giá thành công" });
+
+        } catch (error) {
+            res.status(500).json({ message: error.message });
         }
-  
-        // ✅ CHECK ĐÃ MUA
-        const order = await Order.findOne({
-          user: req.user._id,
-          status: "Completed",
-          "orderItems.product": req.params.id
-        });
-  
-        if (!order) {
-          return res.status(403).json({
-            message: "Bạn cần mua và nhận hàng trước khi đánh giá"
-          });
-        }
-  
-        // ❌ CHECK ĐÃ REVIEW
-        const alreadyReviewed = product.reviews.find(
-          r => r.user.toString() === req.user._id.toString()
-        );
-  
-        if (alreadyReviewed) {
-          return res.status(400).json({
-            message: "Bạn đã đánh giá rồi"
-          });
-        }
-  
-        // ✅ LẤY FILE
-        const imagePaths = req.files?.images?.map(f => f.path) || [];
-        const videoPaths = req.files?.videos?.map(f => f.path) || [];
-  
-        const review = {
-          user: req.user._id,
-          name: req.user.name,
-          rating: Number(rating),
-          comment,
-          images: imagePaths,
-          videos: videoPaths
-        };
-  
-        product.reviews.push(review);
-  
-        // ✅ update rating
-        product.numReviews = product.reviews.length;
-        product.rating =
-          product.reviews.reduce((acc, item) => acc + item.rating, 0) /
-          product.reviews.length;
-  
-        await product.save();
-  
-        res.status(201).json({ message: "Đã đánh giá sản phẩm" });
-  
-      } catch (error) {
-        res.status(500).json({ message: error.message });
-      }
     }
-  );
+);
 // --- PUBLIC ROUTES ---
 
 // 1. GET /api/products (Lấy danh sách)
@@ -199,6 +191,7 @@ router.get("/low-stock", protect, admin, async (req, res) => {
 router.get("/:id", async (req, res) => {
     try {
         const product = await Product.findById(req.params.id)
+            .select("+import_price")
             .populate("category")
             .populate("brand");
 
@@ -214,64 +207,145 @@ router.get("/:id", async (req, res) => {
 // 3. POST /api/products (Tạo mới)
 router.post("/", protect, admin, async (req, res) => {
     try {
-        const {
+        let {
             name, sku, import_price, original_price, price,
-            category, brand, specs, stock, warranty_months, images, description, flashSale
+            category, brand, specs, stock,
+            warranty_months, images, description
         } = req.body;
 
-        const productExists = await Product.findOne({ sku });
-        if (productExists) return res.status(400).json({ message: "Mã SKU đã tồn tại" });
-
-        // <--- 2. TẠO SLUG TỪ NAME --->
-        // Ví dụ: name="Áo Thun" -> slug="ao-thun"
-        const slug = slugify(name, { lower: true, strict: true, locale: 'vi' });
-
-        // Kiểm tra xem slug đã tồn tại chưa (trường hợp trùng tên sản phẩm)
-        const slugExists = await Product.findOne({ slug });
-        if (slugExists) {
-            return res.status(400).json({ message: "Tên sản phẩm đã tồn tại (trùng slug)" });
+        // ❗ VALIDATE CỨNG
+        if (!name || !sku || !category) {
+            return res.status(400).json({ message: "Thiếu thông tin bắt buộc" });
         }
+
+        if (import_price == null || import_price <= 0) {
+            return res.status(400).json({ message: "Giá nhập phải > 0" });
+        }
+
+        if (price <= 0 || original_price <= 0) {
+            return res.status(400).json({ message: "Giá bán không hợp lệ" });
+        }
+
+        // ÉP KIỂU CHẮC CHẮN
+        import_price = Number(import_price);
+        original_price = Number(original_price);
+        price = Number(price);
+        stock = Number(stock || 0);
+
+        const productExists = await Product.findOne({ sku });
+        if (productExists) {
+            return res.status(400).json({ message: "SKU đã tồn tại" });
+        }
+
+        const slug = slugify(name, { lower: true, strict: true, locale: "vi" });
 
         const product = new Product({
             name,
-            slug, // <--- 3. THÊM SLUG VÀO ĐÂY
+            slug,
             sku,
-            import_price,
+            import_price, // ✅ giờ sẽ không còn = 0 nữa
             original_price,
             price,
-            category, brand, specs, stock, warranty_months, images, description
+            category,
+            brand,
+            specs,
+            stock,
+            warranty_months,
+            images,
+            description
         });
 
-        const createdProduct = await product.save();
-        res.status(201).json(createdProduct);
+        const created = await product.save();
+
+        res.status(201).json(created);
+
     } catch (error) {
-        // Bắt lỗi trùng lặp chi tiết hơn
-        if (error.code === 11000) {
-            const field = Object.keys(error.keyPattern)[0];
-            return res.status(400).json({ message: `Dữ liệu trùng lặp: ${field}` });
-        }
-        res.status(400).json({ message: error.message });
+        res.status(500).json({ message: error.message });
     }
 });
 
 // 4. PUT /api/products/:id (Cập nhật)
+// 4. PUT /api/products/:id (Cập nhật)
 router.put("/:id", protect, admin, async (req, res) => {
     try {
-        const product = await Product.findById(req.params.id);
-        if (product) {
-            // Nếu có gửi tên mới lên thì cập nhật lại slug luôn
-            if (req.body.name) {
-                req.body.slug = slugify(req.body.name, { lower: true, strict: true, locale: 'vi' });
-            }
+        const product = await Product.findById(req.params.id).select("+import_price");
 
-            Object.assign(product, req.body);
-            const updatedProduct = await product.save();
-            res.json(updatedProduct);
-        } else {
-            res.status(404).json({ message: "Sản phẩm không tồn tại" });
+        if (!product) {
+            return res.status(404).json({ message: "Sản phẩm không tồn tại" });
         }
+
+        let {
+            name,
+            sku,
+            import_price,
+            original_price,
+            price,
+            category,
+            brand,
+            specs,
+            stock,
+            warranty_months,
+            images,
+            description,
+            flashSale // 👈 THÊM CÁI NÀY
+        } = req.body;
+
+        // ===== VALIDATE =====
+        if (import_price !== undefined) {
+            if (import_price <= 0) {
+                return res.status(400).json({ message: "Giá nhập phải > 0" });
+            }
+            product.import_price = Number(import_price);
+        }
+
+        if (price !== undefined) {
+            if (price <= 0) {
+                return res.status(400).json({ message: "Giá bán không hợp lệ" });
+            }
+            product.price = Number(price);
+        }
+
+        if (original_price !== undefined) {
+            product.original_price = Number(original_price);
+        }
+
+        if (stock !== undefined) {
+            product.stock = Number(stock);
+        }
+
+        // ===== UPDATE BASIC =====
+        if (name) {
+            product.name = name;
+            product.slug = slugify(name, { lower: true, strict: true, locale: "vi" });
+        }
+
+        if (sku) product.sku = sku;
+        if (category) product.category = category;
+        if (brand) product.brand = brand;
+        if (specs) product.specs = specs;
+        if (warranty_months !== undefined) product.warranty_months = warranty_months;
+        if (images) product.images = images;
+        if (description !== undefined) product.description = description;
+
+        // =========================
+        // 🔥 FIX FLASH SALE Ở ĐÂY
+        // =========================
+        if (flashSale) {
+            product.flashSale = {
+                ...product.flashSale,
+                ...flashSale,
+                startTime: flashSale.startTime ? new Date(flashSale.startTime) : product.flashSale.startTime,
+                endTime: flashSale.endTime ? new Date(flashSale.endTime) : product.flashSale.endTime,
+            };
+        }
+
+        const updatedProduct = await product.save();
+
+        res.json(updatedProduct);
+
     } catch (error) {
-        res.status(400).json({ message: error.message });
+        console.error("Update product error:", error);
+        res.status(500).json({ message: error.message });
     }
 });
 

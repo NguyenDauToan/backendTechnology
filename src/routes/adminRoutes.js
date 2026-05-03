@@ -14,9 +14,15 @@ router.use(protect, admin);
 // ==========================================
 
 // GET /api/admin/users - Lấy danh sách user
+// GET /api/admin/users?role=staff
 router.get("/users", async (req, res) => {
     try {
-        const users = await User.find({}).select("-password").sort({ createdAt: -1 });
+        const users = await User.find({
+            role: { $in: ["admin", "staff"] } // ❌ loại bỏ customer
+        })
+        .select("-password")
+        .sort({ createdAt: -1 });
+
         res.json(users);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -111,5 +117,113 @@ router.get("/dashboard", async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+// GET /api/admin/customers
+router.get("/customers", async (req, res) => {
+    try {
+        // Query params từ frontend
+        const page = Number(req.query.page) || 1;
+        const limit = Number(req.query.limit) || 10;
+        const keyword = req.query.keyword
+            ? {
+                  $or: [
+                      { name: { $regex: req.query.keyword, $options: "i" } },
+                      { email: { $regex: req.query.keyword, $options: "i" } },
+                      { phone: { $regex: req.query.keyword, $options: "i" } }
+                  ]
+              }
+            : {};
 
+        const statusFilter =
+            req.query.is_active !== undefined
+                ? { is_active: req.query.is_active === "true" }
+                : {};
+
+        // Điều kiện tổng
+        const query = {
+            role: "user", // khách hàng
+            ...keyword,
+            ...statusFilter
+        };
+
+        // Tổng số record
+        const total = await User.countDocuments(query);
+
+        // Lấy data
+        const customers = await User.find(query)
+            .select("-password")
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit);
+
+        res.json({
+            data: customers,
+            page,
+            totalPages: Math.ceil(total / limit),   
+            total
+        });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+// GET /api/admin/revenue-stats
+router.get("/revenue-stats", async (req, res) => {
+    try {
+        const stats = await Order.aggregate([
+            { $match: { isPaid: true } },
+
+            { $unwind: "$orderItems" },
+
+            {
+                $group: {
+                    _id: {
+                        $dateToString: { format: "%Y-%m-%d", date: "$createdAt" }
+                    },
+
+                    // Doanh thu = giá bán * số lượng
+                    revenue: {
+                        $sum: {
+                            $multiply: [
+                                "$orderItems.price",     // giá bán
+                                "$orderItems.quantity"
+                            ]
+                        }
+                    },
+
+                    // Lợi nhuận = (giá bán - giá nhập) * số lượng
+                    profit: {
+                        $sum: {
+                            $multiply: [
+                                {
+                                    $subtract: [
+                                        "$orderItems.price",
+                                        "$orderItems.costPrice" // 👉 cần có field này
+                                    ]
+                                },
+                                "$orderItems.quantity"
+                            ]
+                        }
+                    },
+
+                    orderCount: { $sum: 1 }
+                }
+            },
+
+            { $sort: { _id: 1 } },
+
+            {
+                $project: {
+                    _id: 0,
+                    date: "$_id",
+                    revenue: 1,
+                    profit: 1,
+                    orderCount: 1
+                }
+            }
+        ]);
+
+        res.json(stats);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
 export default router;

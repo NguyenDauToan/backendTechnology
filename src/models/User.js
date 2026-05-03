@@ -27,7 +27,6 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ['user', 'admin', 'staff'], default: 'user' },
   googleId: { type: String },
   avatar: { type: String },
-  is_active: { type: Boolean, default: true }
 }, { timestamps: true });
 
 // Middleware hash password trước khi lưu

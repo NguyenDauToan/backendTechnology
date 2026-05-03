@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import Order from '../models/Order.js';
 import Product from '../models/Product.js';
 import Warranty from '../models/Warranty.js';
-import { protect, admin, staff } from '../middlewares/authMiddleware.js';
+import { protect, admin, staff, adminOrStaff } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
@@ -19,35 +19,108 @@ const generateIMEI = () => {
 };
 // 1. Tạo đơn hàng mới (User mua)
 router.post("/", protect, async (req, res) => {
-    // 1. Bổ sung itemsPrice, shippingPrice vào destructuring
     const {
         orderItems,
         shippingAddress,
         paymentMethod,
-        totalPrice,
-        itemsPrice,    // <--- Thêm cái này
-        shippingPrice  // <--- Thêm cái này
+        shippingPrice = 0
     } = req.body;
 
-    if (orderItems && orderItems.length === 0) {
-        return res.status(400).json({ message: "Không có sản phẩm nào trong giỏ" });
+    if (!orderItems || orderItems.length === 0) {
+        return res.status(400).json({ message: "Không có sản phẩm" });
     }
 
     try {
+        let itemsPrice = 0;
+        const newItems = [];
+
+        for (const item of orderItems) {
+            // 🔥 LẤY TỪ DB (KHÔNG tin FE)
+            const product = await Product.findById(item.product).select("+import_price");
+
+            if (!product) {
+                return res.status(404).json({ message: "Sản phẩm không tồn tại" });
+            }
+
+            let price = product.price;
+
+            const now = new Date();
+
+            const isFlashSaleActive =
+                product.flashSale?.isSale &&
+                new Date(product.flashSale.startTime) <= now &&
+                new Date(product.flashSale.endTime) > now;
+
+            if (isFlashSaleActive) {
+                price = product.flashSale.salePrice;
+            }
+            console.log({
+                now,
+                start: product.flashSale?.startTime,
+                end: product.flashSale?.endTime,
+                isSale: product.flashSale?.isSale
+            });
+            const costPrice = product.import_price;    // 🔥 giá nhập
+
+            itemsPrice += price * item.quantity;
+
+            newItems.push({
+                product: product._id,
+                name: product.name,
+                quantity: item.quantity,
+
+                price: price,
+                costPrice: costPrice, // 🔥 THÊM CÁI NÀY
+
+                image: product.images[0]
+            });
+        }
+
+        const totalPrice = itemsPrice + shippingPrice;
+
         const order = new Order({
             user: req.user._id,
-            orderItems,
+            orderItems: newItems, // 🔥 dùng data đã xử lý
             shippingAddress,
             paymentMethod,
-            itemsPrice,    // <--- Lưu vào DB
-            shippingPrice, // <--- Lưu vào DB
+            itemsPrice,
+            shippingPrice,
             totalPrice
         });
 
         const createdOrder = await order.save();
+
         res.status(201).json(createdOrder);
+
     } catch (error) {
-        console.error("Error creating order:", error); // Log lỗi ra terminal để debug
+        console.error("Create order error:", error);
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// orderRoutes.js
+
+router.get("/check-review/:productId", protect, async (req, res) => {
+    try {
+        const productId = req.params.productId;
+
+        // Tìm đơn hàng đã giao thành công (Completed) có chứa sản phẩm này
+        const order = await Order.findOne({
+            user: req.user._id,
+            status: "Completed", // Quan trọng: Khách đã bấm nhận hàng thì status là Completed
+            orderItems: {
+                $elemMatch: {
+                    product: new mongoose.Types.ObjectId(productId)
+                }
+            }
+        });
+
+        // Trả về kết quả rõ ràng
+        return res.json({
+            canReview: !!order 
+        });
+
+    } catch (error) {
         res.status(500).json({ message: error.message });
     }
 });
@@ -93,7 +166,7 @@ router.put("/:id/pay", protect, async (req, res) => {
     }
 });
 // PUT /api/orders/:id/confirm
-router.put("/:id/confirm", protect, admin, staff, async (req, res) => {
+router.put("/:id/confirm", protect, adminOrStaff, async (req, res) => {
     try {
         const order = await Order.findById(req.params.id);
         if (!order) throw new Error("Không tìm thấy đơn hàng");
@@ -141,45 +214,7 @@ router.put("/:id/confirm", protect, admin, staff, async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
-// GET /api/orders/my-products
-router.get("/my-products", protect, async (req, res) => {
-    try {
-        const orders = await Order.find({
-            user: req.user._id,
-            isPaid: true // chỉ lấy đơn đã thanh toán
-        });
 
-        let products = [];
-
-        for (const order of orders) {
-            for (const item of order.orderItems) {
-
-                // Lấy warranty để có IMEI (code)
-                const warranties = await Warranty.find({
-                    order_id: order._id,
-                    product_id: item.product,
-                    user_id: req.user._id
-                });
-
-                warranties.forEach(w => {
-                    products.push({
-                        _id: w._id,
-                        name: item.name,
-                        imei: w.code, // 👈 dùng code làm IMEI
-                        product_id: item.product,
-                        order_id: order._id
-                    });
-                });
-            }
-        }
-
-        res.json(products);
-
-    } catch (error) {
-        console.error("Lỗi my-products:", error);
-        res.status(500).json({ message: error.message });
-    }
-});
 // 4. Lấy TẤT CẢ đơn hàng (Dành cho Admin Page)
 router.get("/", protect, admin, async (req, res) => {
     try {
@@ -227,7 +262,21 @@ router.put("/:id/status", protect, async (req, res) => {
                 const product = await Product.findById(item.product);
                 if (product) {
                     product.stock -= item.quantity;
+
+                    // tổng sold
                     product.sold = (product.sold || 0) + item.quantity;
+
+                    // 🔥 flash sale sold
+                    const now = new Date();
+                    const isFlashSaleActive =
+                        product.flashSale?.isSale &&
+                        new Date(product.flashSale.startTime) <= now &&
+                        new Date(product.flashSale.endTime) > now;
+
+                    if (isFlashSaleActive) {
+                        product.flashSale.sold = (product.flashSale.sold || 0) + item.quantity;
+                    }
+
                     await product.save();
                 }
             }
@@ -328,7 +377,18 @@ router.put("/:id/received", protect, async (req, res) => {
             const product = await Product.findById(item.product);
             if (product) {
                 product.stock -= item.quantity;
-                product.sold += item.quantity;
+                product.sold = (product.sold || 0) + item.quantity;
+
+                const now = new Date();
+                const isFlashSaleActive =
+                    product.flashSale?.isSale &&
+                    new Date(product.flashSale.startTime) <= now &&
+                    new Date(product.flashSale.endTime) > now;
+
+                if (isFlashSaleActive) {
+                    product.flashSale.sold = (product.flashSale.sold || 0) + item.quantity;
+                }
+
                 await product.save();
             }
         }

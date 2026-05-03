@@ -10,84 +10,100 @@ router.get('/revenue', protect, admin, async (req, res) => {
     try {
         const { type = 'daily' } = req.query;
 
-        // 1. Xác định khoảng thời gian lọc
-        let dateGroupFormat;
         let startDate = new Date();
+        let format;
 
         if (type === 'daily') {
-            // Lấy 7 ngày gần nhất
             startDate.setDate(startDate.getDate() - 7);
-            dateGroupFormat = { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } };
-        } else if (type === 'monthly') {
-            // Lấy 12 tháng gần nhất
+            format = "%Y-%m-%d";
+        } else {
             startDate.setMonth(startDate.getMonth() - 11);
-            dateGroupFormat = { $dateToString: { format: "%Y-%m", date: "$createdAt" } };
-        } 
-        // (Bạn có thể mở rộng thêm logic weekly nếu cần)
+            format = "%Y-%m";
+        }
 
-        // 2. Pipeline Aggregation
         const stats = await Order.aggregate([
             {
                 $match: {
                     createdAt: { $gte: startDate },
-                    // Chỉ tính đơn hàng đã thanh toán/hoàn thành
-                    status: { $in: ['delivered', 'completed'] }, 
-                    isPaid: true // Nếu có trường này
+                    status: { $in: ['Delivered', 'Completed'] },
+                    isPaid: true
                 }
             },
-            // Tách mảng orderItems ra từng document riêng lẻ
+
             { $unwind: "$orderItems" },
-            // Join với bảng Products để lấy giá nhập (import_price)
+
+            // 🔥 JOIN PRODUCT
             {
                 $lookup: {
-                    from: "products", // Tên collection trong DB (thường là số nhiều, viết thường)
+                    from: "products",
                     localField: "orderItems.product",
                     foreignField: "_id",
-                    as: "productDetails"
+                    as: "product"
                 }
             },
-            // Unwind mảng productDetails (vì lookup trả về mảng)
-            { $unwind: "$productDetails" },
-            // Tính toán lợi nhuận cho từng item
-            {
-                $project: {
-                    createdAt: 1,
-                    quantity: "$orderItems.quantity",
-                    price: "$orderItems.price", // Giá bán tại thời điểm mua
-                    importPrice: "$productDetails.import_price", // Giá nhập hiện tại
-                    // Doanh thu item = giá bán * số lượng
-                    itemRevenue: { $multiply: ["$orderItems.price", "$orderItems.quantity"] },
-                    // Chi phí item = giá nhập * số lượng
-                    itemCost: { $multiply: ["$productDetails.import_price", "$orderItems.quantity"] }
-                }
-            },
-            // Gom nhóm theo ngày/tháng
+            { $unwind: "$product" },
+
+            // 🔥 GROUP 1: theo ngày + order
             {
                 $group: {
-                    _id: dateGroupFormat,
-                    totalRevenue: { $sum: "$itemRevenue" },
-                    totalCost: { $sum: "$itemCost" },
-                    totalOrders: { $addToSet: "$_id" } // Đếm số đơn (unique order ID)
+                    _id: {
+                        date: {
+                            $dateToString: {
+                                format: format,
+                                date: "$createdAt"
+                            }
+                        },
+                        orderId: "$_id"
+                    },
+
+                    revenue: {
+                        $sum: {
+                            $multiply: [
+                                "$orderItems.price",
+                                "$orderItems.quantity"
+                            ]
+                        }
+                    },
+
+                    cost: {
+                        $sum: {
+                            $multiply: [
+                                "$product.import_price", // ✅ FIX CHUẨN
+                                "$orderItems.quantity"
+                            ]
+                        }
+                    }
                 }
             },
-            // Tính lợi nhuận cuối cùng và đếm số đơn
+
+            // 🔥 GROUP 2: theo ngày
+            {
+                $group: {
+                    _id: "$_id.date",
+                    revenue: { $sum: "$revenue" },
+                    cost: { $sum: "$cost" },
+                    orderCount: { $sum: 1 }
+                }
+            },
+
             {
                 $project: {
+                    _id: 0,
                     date: "$_id",
-                    revenue: "$totalRevenue",
-                    profit: { $subtract: ["$totalRevenue", "$totalCost"] },
-                    orderCount: { $size: "$totalOrders" },
-                    _id: 0
+                    revenue: 1,
+                    profit: { $subtract: ["$revenue", "$cost"] },
+                    orderCount: 1
                 }
             },
-            { $sort: { date: 1 } } // Sắp xếp tăng dần theo thời gian
+
+            { $sort: { date: 1 } }
         ]);
 
         res.json(stats);
+
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: error.message });
     }
 });
-
 export default router;

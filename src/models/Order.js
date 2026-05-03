@@ -9,7 +9,8 @@ const orderSchema = new mongoose.Schema({
         quantity: { type: Number, required: true },
         price: { type: Number, required: true }, // Giá tại thời điểm mua (Quan trọng)
         image: { type: String },
-        imeiList: [String] 
+        imeiList: [String],
+        costPrice: { type: Number, required: true }, 
     }],
     isReceived: { type: Boolean, default: false },
     shippingAddress: {

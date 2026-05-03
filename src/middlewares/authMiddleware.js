@@ -47,4 +47,10 @@ const staff = (req, res, next) => {
         throw new Error('Không có quyền thực hiện (Yêu cầu quyền Nhân viên)');
     }
 };
-export { protect, admin, staff};
+const adminOrStaff = (req, res, next) => {
+    if (req.user && (req.user.role === "admin" || req.user.role === "staff")) {
+        return next();
+    }
+    return res.status(403).json({ message: "Không có quyền" });
+};
+export { protect, admin, staff, adminOrStaff};

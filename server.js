@@ -18,6 +18,7 @@ import warrantyRoutes from './src/routes/warrantyRoutes.js';
 import dashboardRoutes from './src/routes/dashboardRoutes.js';
 // 1. IMPORT PAYMENT ROUTES (Đảm bảo bạn đã tạo file này trong thư mục routes nhé)
 import paymentRoutes from './src/routes/paymentRoutes.js';
+import analyticsRoutes from './src/routes/analyticsRoutes.js';
 
 dotenv.config();
 connectDB();
@@ -37,6 +38,7 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/addresses', addressRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/warranty', warrantyRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 // 2. KHAI BÁO PAYMENT ROUTES CHO APP
 app.use('/api/payment', paymentRoutes);
