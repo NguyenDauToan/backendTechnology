@@ -8,7 +8,7 @@ const productSchema = new mongoose.Schema({
     // Liên kết
     category: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', required: true },
     brand: { type: mongoose.Schema.Types.ObjectId, ref: 'Brand' },
-
+    series: { type: mongoose.Schema.Types.ObjectId, ref: "Series" },
     // --- CẬP NHẬT PHẦN GIÁ ---
     import_price: { type: Number, required: true, select: false }, // Giá nhập (Ẩn khi query thường)
     original_price: { type: Number, required: true }, // Giá niêm yết (Giá gạch ngang)
@@ -37,6 +37,7 @@ const productSchema = new mongoose.Schema({
             videos: [String],
         }
     ],
+    
     numReviews: { type: Number, default: 0 },
     rating: { type: Number, default: 0 }, // ⭐ trung bình
     warranty_months: { type: Number, default: 12 },

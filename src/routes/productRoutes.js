@@ -6,6 +6,7 @@ import { protect, admin } from '../middlewares/authMiddleware.js';
 import upload from '../config/cloudinary.js'; // ✅ Sử dụng Cloudinary cấu hình sẵn
 import slugify from 'slugify';
 import mongoose from "mongoose";
+import Brand from '../models/Brand.js';
 
 const router = express.Router();
 
@@ -77,7 +78,7 @@ router.post(
 // 1. GET /api/products (Lấy danh sách)
 router.get("/", async (req, res) => {
     try {
-        const { q, categoryId, minPrice, maxPrice, cpu, sort } = req.query;
+        const { q, categoryId, minPrice, maxPrice, cpu, sort, brand, series  } = req.query;
 
         const filter = { is_active: true };
 
@@ -105,11 +106,29 @@ router.get("/", async (req, res) => {
 
             filter["specs.cpu"] = { $in: cpuList };
         }
-
+        // BRAND FILTER
+        if (brand) {
+            const brandList = Array.isArray(brand) ? brand : [brand];
+        
+            const validBrandIds = brandList
+                .filter(id => mongoose.Types.ObjectId.isValid(id))
+                .map(id => new mongoose.Types.ObjectId(id));
+        
+            filter.brand = { $in: validBrandIds };
+        }
+        if (series) {
+            const seriesList = Array.isArray(series) ? series : [series];
+        
+            const validSeriesIds = seriesList
+                .filter(id => mongoose.Types.ObjectId.isValid(id))
+                .map(id => new mongoose.Types.ObjectId(id));
+        
+            filter.series = { $in: validSeriesIds };
+        }
         let query = Product.find(filter)
             .populate("category", "name slug")
-            .populate("brand", "name");
-
+            .populate("brand", "name slug")
+            .populate("series", "name");
         // SORT
         if (sort === "price_asc") query = query.sort({ price: 1 });
         else if (sort === "price_desc") query = query.sort({ price: -1 });
@@ -209,11 +228,11 @@ router.post("/", protect, admin, async (req, res) => {
     try {
         let {
             name, sku, import_price, original_price, price,
-            category, brand, specs, stock,
+            category, brand, specs, stock, series,
             warranty_months, images, description
         } = req.body;
 
-        // ❗ VALIDATE CỨNG
+        // VALIDATE
         if (!name || !sku || !category) {
             return res.status(400).json({ message: "Thiếu thông tin bắt buộc" });
         }
@@ -226,7 +245,19 @@ router.post("/", protect, admin, async (req, res) => {
             return res.status(400).json({ message: "Giá bán không hợp lệ" });
         }
 
-        // ÉP KIỂU CHẮC CHẮN
+        // ✅ CHECK BRAND
+        if (brand) {
+            if (!mongoose.Types.ObjectId.isValid(brand)) {
+                return res.status(400).json({ message: "Brand không hợp lệ" });
+            }
+
+            const brandExists = await Brand.findById(brand);
+            if (!brandExists) {
+                return res.status(400).json({ message: "Brand không tồn tại" });
+            }
+        }
+
+        // ÉP KIỂU
         import_price = Number(import_price);
         original_price = Number(original_price);
         price = Number(price);
@@ -243,11 +274,12 @@ router.post("/", protect, admin, async (req, res) => {
             name,
             slug,
             sku,
-            import_price, // ✅ giờ sẽ không còn = 0 nữa
+            import_price,
             original_price,
             price,
             category,
-            brand,
+            brand: brand || null, // 👈 fix null
+            series: series || null, 
             specs,
             stock,
             warranty_months,
@@ -263,8 +295,6 @@ router.post("/", protect, admin, async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
-
-// 4. PUT /api/products/:id (Cập nhật)
 // 4. PUT /api/products/:id (Cập nhật)
 router.put("/:id", protect, admin, async (req, res) => {
     try {
@@ -282,6 +312,7 @@ router.put("/:id", protect, admin, async (req, res) => {
             price,
             category,
             brand,
+            series,
             specs,
             stock,
             warranty_months,
@@ -289,7 +320,7 @@ router.put("/:id", protect, admin, async (req, res) => {
             description,
             flashSale // 👈 THÊM CÁI NÀY
         } = req.body;
-
+        if (series !== undefined) product.series = series;
         // ===== VALIDATE =====
         if (import_price !== undefined) {
             if (import_price <= 0) {
@@ -395,14 +426,26 @@ router.get("/category/:slug", async (req, res) => {
             return res.status(404).json({ message: "Không tìm thấy danh mục" });
         }
 
-        const products = await Product.find({ category: category._id });
+        // 🔥 Lấy tất cả danh mục con
+        const childCategories = await Category.find({
+            parent_id: category._id
+        });
+
+        const categoryIds = [
+            category._id,
+            ...childCategories.map(c => c._id)
+        ];
+
+        // 🔥 Lấy sản phẩm thuộc cả cha + con
+        const products = await Product.find({
+            category: { $in: categoryIds }
+        });
 
         res.json(products);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
 });
-
 // GET /api/products/:id/reviews
 router.get("/:id/reviews", async (req, res) => {
     try {

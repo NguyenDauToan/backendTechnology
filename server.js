@@ -19,7 +19,8 @@ import dashboardRoutes from './src/routes/dashboardRoutes.js';
 // 1. IMPORT PAYMENT ROUTES (Đảm bảo bạn đã tạo file này trong thư mục routes nhé)
 import paymentRoutes from './src/routes/paymentRoutes.js';
 import analyticsRoutes from './src/routes/analyticsRoutes.js';
-
+import brandRoutes from "./src/routes/brandRoutes.js"
+import seriesRoutes from "./src/routes/seriesRoutes.js";
 dotenv.config();
 connectDB();
 
@@ -39,10 +40,11 @@ app.use('/api/addresses', addressRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/warranty', warrantyRoutes);
 app.use('/api/analytics', analyticsRoutes);
-
+app.use("/api/brands", brandRoutes);
 // 2. KHAI BÁO PAYMENT ROUTES CHO APP
 app.use('/api/payment', paymentRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use("/api/series", seriesRoutes);
 app.get('/', (req, res) => {
     res.send('API Huynh Gia is running...');
 });
