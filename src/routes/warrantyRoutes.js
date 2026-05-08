@@ -1,7 +1,7 @@
 import express from 'express';
 import WarrantyTicket from '../models/WarrantyTicket.js';
 import { protect, admin } from '../middlewares/authMiddleware.js'; // Bỏ staff nếu chưa định nghĩa
-
+import Order from '../models/Order.js';
 const router = express.Router();
 
 // 1. TẠO PHIẾU (ADMIN)
@@ -195,5 +195,46 @@ router.get('/my-tickets', protect, async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+// 6. LẤY DANH SÁCH SẢN PHẨM ĐÃ MUA
+router.get('/my-products', protect, async (req, res) => {
+    try {
 
+        // lấy các đơn đã hoàn thành của user
+        const orders = await Order.find({
+            user: req.user._id,
+            status: "Completed"
+        }).populate("orderItems.product");
+
+        let products = [];
+
+        orders.forEach(order => {
+            order.orderItems.forEach(item => {
+                if (item.product) {
+                    products.push({
+                        _id: item.product._id,
+                        name: item.product.name,
+
+                        // nếu chưa có imei thì fake serial
+                        imei:
+                            item.serialNumber ||
+                            item.product.serialNumber ||
+                            "Không có"
+                    });
+                }
+            });
+        });
+
+        // remove duplicate
+        const uniqueProducts = products.filter(
+            (p, index, self) =>
+                index === self.findIndex(x => x._id.toString() === p._id.toString())
+        );
+
+        res.json(uniqueProducts);
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: error.message });
+    }
+});
 export default router;

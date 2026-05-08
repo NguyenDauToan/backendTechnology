@@ -36,8 +36,9 @@ passport.use(
           name: profile.displayName,
           email: profile.emails[0].value,
           googleId: profile.id,
-          avatar: profile.photos && profile.photos.length > 0 ? profile.photos[0].value : "",
-          password: "",
+          avatar: profile.photos && profile.photos.length > 0
+            ? profile.photos[0].value
+            : "",
           role: "user",
         });
 

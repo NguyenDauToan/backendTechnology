@@ -358,11 +358,14 @@ router.put("/:id/cod-paid", protect, staff, async (req, res) => {
 });
 
 // PUT /api/orders/:id/received
+// PUT /api/orders/:id/received
 router.put("/:id/received", protect, async (req, res) => {
     try {
         const order = await Order.findById(req.params.id);
 
-        if (!order) return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
+        if (!order) {
+            return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
+        }
 
         if (order.user.toString() !== req.user._id.toString()) {
             return res.status(403).json({ message: "Không có quyền" });
@@ -372,21 +375,42 @@ router.put("/:id/received", protect, async (req, res) => {
             return res.status(400).json({ message: "Đơn chưa giao" });
         }
 
-        // ✅ TRỪ KHO TẠI ĐÂY (CHUẨN SHOPEE)
+        // ✅ XỬ LÝ TỪNG SẢN PHẨM
         for (const item of order.orderItems) {
+
+            // =========================
+            // 🔥 TỰ ĐỘNG SINH IMEI
+            // =========================
+            if (!item.imeiList || item.imeiList.length === 0) {
+
+                item.imeiList = [];
+
+                for (let i = 0; i < item.quantity; i++) {
+                    item.imeiList.push(generateIMEI());
+                }
+            }
+
+            // =========================
+            // 🔥 TRỪ KHO
+            // =========================
             const product = await Product.findById(item.product);
+
             if (product) {
+
                 product.stock -= item.quantity;
+
                 product.sold = (product.sold || 0) + item.quantity;
 
                 const now = new Date();
+
                 const isFlashSaleActive =
                     product.flashSale?.isSale &&
                     new Date(product.flashSale.startTime) <= now &&
                     new Date(product.flashSale.endTime) > now;
 
                 if (isFlashSaleActive) {
-                    product.flashSale.sold = (product.flashSale.sold || 0) + item.quantity;
+                    product.flashSale.sold =
+                        (product.flashSale.sold || 0) + item.quantity;
                 }
 
                 await product.save();
@@ -398,9 +422,13 @@ router.put("/:id/received", protect, async (req, res) => {
 
         await order.save();
 
-        res.json({ message: "Đã xác nhận nhận hàng" });
+        res.json({
+            message: "Đã xác nhận nhận hàng",
+            order
+        });
 
     } catch (error) {
+        console.error(error);
         res.status(500).json({ message: error.message });
     }
 });
