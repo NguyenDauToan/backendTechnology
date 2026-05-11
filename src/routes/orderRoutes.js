@@ -248,7 +248,14 @@ router.put("/:id/status", protect, async (req, res) => {
                     message: "Chưa thu tiền COD, không thể hoàn tất đơn"
                 });
             }
-
+            if (
+                status === "Cancelled" &&
+                !["Pending", "Confirmed"].includes(order.status)
+            ) {
+                return res.status(400).json({
+                    message: "Không thể hủy đơn ở trạng thái này"
+                });
+            }
             // ❗ Non-COD thì auto paid
             if (order.paymentMethod !== 'COD') {
                 order.isPaid = true;
@@ -309,7 +316,58 @@ router.get("/staff/deliveries", protect, staff, async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+// PUT /api/orders/:id/cancel
+router.put("/:id/cancel", protect, async (req, res) => {
+    try {
+        const { reason } = req.body;
 
+        const order = await Order.findById(req.params.id);
+
+        if (!order) {
+            return res.status(404).json({
+                message: "Không tìm thấy đơn hàng"
+            });
+        }
+
+        // chỉ chủ đơn mới được hủy
+        if (order.user.toString() !== req.user._id.toString()) {
+            return res.status(403).json({
+                message: "Không có quyền hủy đơn này"
+            });
+        }
+
+        // chỉ cho hủy khi chưa giao
+        const allowStatus = ["Pending", "Confirmed"];
+
+        if (!allowStatus.includes(order.status)) {
+            return res.status(400).json({
+                message: "Đơn hàng không thể hủy"
+            });
+        }
+
+        // cập nhật trạng thái
+        order.status = "Cancelled";
+
+        // thêm lý do hủy
+        order.cancelReason = reason || "Không có lý do";
+
+        order.cancelledAt = Date.now();
+
+        await order.save();
+
+        res.json({
+            message: "Hủy đơn hàng thành công",
+            order
+        });
+
+    } catch (error) {
+        console.error("Cancel order error:", error);
+
+        res.status(500).json({
+            message: error.message
+        });
+    }
+});
 // 7. Lấy chi tiết đơn hàng theo ID (Đặt route này ở cuối cùng để tránh xung đột)
 router.get("/:id", protect, async (req, res) => {
     try {
