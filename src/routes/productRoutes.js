@@ -461,5 +461,31 @@ router.get("/:id/reviews", async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+// GET /api/products/search/suggest?q=...
+router.get("/search/suggest", async (req, res) => {
+    try {
+        const q = req.query.q;
 
+        if (!q || q.trim().length < 2) {
+            return res.json([]);
+        }
+
+        const products = await Product.find({
+            name: {
+                $regex: q,
+                $options: "i"
+            },
+            is_active: true
+        })
+        .select("name slug images price")
+        .limit(8);
+
+        res.json(products);
+
+    } catch (error) {
+        res.status(500).json({
+            message: error.message
+        });
+    }
+});
 export default router;
